@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import copy
 
-# Ensure xlsxwriter is available
 try:
     import xlsxwriter
 except ImportError:
@@ -10,172 +10,206 @@ except ImportError:
 
 
 def ultimate_bakery_manager():
-    st.set_page_config(page_title="Bakery Recipe Manager", layout="wide")
-    st.title("🇳🇵 Professional Recipe Manager & Data Updater")
+    st.set_page_config(page_title="Bakery Master Pro", layout="wide")
+    st.title("🇳🇵 Bakery Master: Unit-Based Pricing & Recipe Manager")
 
-    # --- SESSION STATE ---
+    # --- 1. SESSION STATE ---
     if 'master_records' not in st.session_state:
         st.session_state.master_records = []
-
     if 'ingredients' not in st.session_state:
         st.session_state.ingredients = [{"item": "", "qty": 0.0, "unit": "g", "price_per_unit": 0.0}]
+    if 'current_yield' not in st.session_state:
+        st.session_state.current_yield = 1.0
+    if 'recipe_version' not in st.session_state:
+        st.session_state.recipe_version = 0
 
-    # --- SIDEBAR: OVERHEADS ---
+    # --- 2. SIDEBAR: OVERHEADS ---
     st.sidebar.header("🏢 Monthly Fixed Overheads")
     rent = st.sidebar.number_input("Monthly Rent (रू)", value=45000)
     salaries = st.sidebar.number_input("Staff Salaries (रू)", value=90000)
     utilities = st.sidebar.number_input("Utility Bills (रू)", value=8000)
-
     asset_val = st.sidebar.number_input("Equipment Value (रू)", value=500000)
     lifespan = st.sidebar.slider("Lifespan (Years)", 1, 15, 5)
-    monthly_dep = (asset_val / lifespan) / 12
-    total_fixed_monthly = rent + salaries + utilities + monthly_dep
 
-    st.sidebar.divider()
-    target_volume = st.sidebar.number_input("Total Monthly Units (All Items)", value=2000, min_value=1)
+    monthly_dep = (asset_val / lifespan) / 12 if lifespan > 0 else 0
+    total_fixed_monthly = rent + salaries + utilities + monthly_dep
+    target_volume = st.sidebar.number_input("Total Monthly Units (Total Pieces Sold)", value=2000, min_value=1)
     fixed_share_per_unit = total_fixed_monthly / target_volume
 
-    # --- NEW: UPLOAD EXISTING FILE ---
+    # --- 3. DATA IMPORT ---
     st.sidebar.header("📂 Data Continuity")
-    uploaded_file = st.sidebar.file_uploader("Upload 'bakery_recipe_book.xlsx' to continue", type=["xlsx"])
-
-    if uploaded_file is not None and st.sidebar.button("Import Data from File"):
+    uploaded_file = st.sidebar.file_uploader("Upload Excel", type=["xlsx"])
+    if uploaded_file is not None and st.sidebar.button("Import Data"):
         try:
-            df_import = pd.read_excel(uploaded_file)
-            # Logic to reconstruct master_records from the flat Excel structure
+            df_import = pd.read_excel(uploaded_file).fillna("")
             temp_records = []
             current_product = None
 
+            def safe_float(x):
+                try:
+                    return float(x) if str(x).strip() != "" else 0.0
+                except:
+                    return 0.0
+
             for _, row in df_import.iterrows():
-                val = str(row['Product/Ingredient'])
+                val = str(row['Product/Ingredient']).strip()
+                if not val: continue
+
                 if "--- PRODUCT:" in val:
                     name = val.replace("--- PRODUCT: ", "").replace(" ---", "")
                     current_product = {
                         "Product Info": {
                             "Name": name,
-                            "Yield": row['Yield'],
-                            "Raw Mat/Unit": row['Raw Mat/Unit'],
-                            "Dine-In MRP": row['Dine-In MRP'],
-                            "Delivery MRP": row['Delivery MRP']
+                            "Yield": safe_float(row.get('Yield', 1.0)),
+                            "Raw Mat/Unit": safe_float(row.get('Raw Mat/Unit', 0.0)),
+                            "Full Batch MRP": safe_float(row.get('Full Batch MRP', 0.0)),
+                            "Per Piece MRP": safe_float(row.get('Per Piece MRP', 0.0)),
+                            "Delivery MRP": safe_float(row.get('Delivery MRP', 0.0))
                         },
                         "Recipe": []
                     }
                     temp_records.append(current_product)
-                elif val and val != "nan" and current_product:
+                elif current_product and not val.startswith("---"):
                     current_product["Recipe"].append({
-                        "item": val,
-                        "qty": row['Qty'],
-                        "unit": row['Unit'],
-                        "price_per_unit": row['Price/Unit'],
-                        "total": row['Total Cost']
+                        "item": val, "qty": safe_float(row.get('Qty', 0.0)),
+                        "unit": str(row.get('Unit', 'g')),
+                        "price_per_unit": safe_float(row.get('Price/Unit', 0.0)),
+                        "total": safe_float(row.get('Total Cost', 0.0))
                     })
             st.session_state.master_records = temp_records
-            st.sidebar.success("Successfully imported saved products!")
+            st.sidebar.success(f"Imported {len(temp_records)} Products")
         except Exception as e:
-            st.sidebar.error("Error: Make sure the file matches the exported format.")
+            st.sidebar.error(f"Import Error: {e}")
 
-    # --- MAIN SECTION: RECIPE BUILDER ---
-    st.header("🥣 Recipe Builder")
-    product_name = st.text_input("Product Name", value="New Product")
+    # --- 4. RECIPE EDITOR ---
+    st.header("🥣 Recipe Editor")
+    existing_names = [r["Product Info"]["Name"] for r in st.session_state.master_records]
+    col_name, col_status = st.columns([2, 1])
+    product_name = col_name.text_input("Product Name", value="New Product")
 
-    new_ingredients = []
+    if product_name in existing_names:
+        col_status.info("🔄 Product Loaded")
+        if st.button("Refresh Fields"):
+            match = next(
+                item for item in st.session_state.master_records if item["Product Info"]["Name"] == product_name)
+            st.session_state.ingredients = copy.deepcopy(match["Recipe"])
+            st.session_state.current_yield = float(match["Product Info"]["Yield"])
+            st.session_state.recipe_version += 1
+            st.rerun()
+
+    v = st.session_state.recipe_version
+    updated_ingredients = []
     for i, ing in enumerate(st.session_state.ingredients):
-        cols = st.columns([3, 1, 1, 2, 1])
-        name = cols[0].text_input(f"Ingredient", value=ing["item"], key=f"name_{i}")
-        qty = cols[1].number_input("Qty", value=ing["qty"], key=f"qty_{i}", format="%.2f")
-        unit = cols[2].selectbox("Unit", ["g", "kg", "ml", "ltr", "pcs"],
-                                 index=["g", "kg", "ml", "ltr", "pcs"].index(ing["unit"]), key=f"unit_{i}")
-        price = cols[3].number_input("Price/Unit (रू)", value=ing["price_per_unit"], key=f"price_{i}", format="%.2f")
+        c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 2, 1])
+        i_name = c1.text_input("Ingredient Name", value=ing["item"], key=f"n_{v}_{i}")
+        i_qty = c2.number_input("Qty Used", value=float(ing["qty"]), key=f"q_{v}_{i}", format="%.2f")
+        i_unit = c3.selectbox("Unit", ["g", "kg", "ml", "ltr", "pcs"],
+                              index=["g", "kg", "ml", "ltr", "pcs"].index(ing["unit"]), key=f"u_{v}_{i}")
+        i_price = c4.number_input("Price/Unit", value=float(ing["price_per_unit"]), key=f"p_{v}_{i}", format="%.2f")
+        i_total = i_qty * i_price
+        c5.write(f"**Total**\nरू {i_total:.2f}")
+        updated_ingredients.append(
+            {"item": i_name, "qty": i_qty, "unit": i_unit, "price_per_unit": i_price, "total": i_total})
 
-        row_total = qty * price
-        cols[4].write(f"**Total**\nरू {row_total:.2f}")
-        new_ingredients.append({"item": name, "qty": qty, "unit": unit, "price_per_unit": price, "total": row_total})
+    st.session_state.ingredients = updated_ingredients
 
-    st.session_state.ingredients = new_ingredients
-
-    c1, c2 = st.columns([1, 4])
-    if c1.button("➕ Add Row"):
+    btn1, btn2 = st.columns([1, 5])
+    if btn1.button("➕ Add Row"):
         st.session_state.ingredients.append({"item": "", "qty": 0.0, "unit": "g", "price_per_unit": 0.0})
         st.rerun()
-    if c2.button("🗑️ Clear Form"):
+    if btn2.button("🗑️ Reset Form"):
         st.session_state.ingredients = [{"item": "", "qty": 0.0, "unit": "g", "price_per_unit": 0.0}]
+        st.session_state.current_yield = 1.0
+        st.session_state.recipe_version += 1
         st.rerun()
 
-    # --- PRICING ---
+    # --- 5. CALCULATIONS (PIECE-BASED) ---
     st.divider()
     total_recipe_cost = sum(ing["total"] for ing in st.session_state.ingredients)
-    yield_qty = st.number_input("Yield per Recipe", value=10, min_value=1)
-    raw_mat_unit = total_recipe_cost / yield_qty
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        spoilage_pct = st.number_input("Wastage %", value=7.0)
-        buffer_pct = st.number_input("Buffer %", value=5.0)
-        packaging = st.number_input("Packaging (रू)", value=15.0)
-        total_var_unit = raw_mat_unit + (raw_mat_unit * (spoilage_pct + buffer_pct) / 100) + packaging
-        total_cost_absorbed = total_var_unit + fixed_share_per_unit
+    # CLEARLY LABELLED AS PIECES
+    yield_qty = st.number_input("Yield (Total pieces produced from this recipe)", value=st.session_state.current_yield,
+                                min_value=0.01, key=f"y_{v}")
+    st.session_state.current_yield = yield_qty
 
-    with col_b:
-        margin_pct = st.slider("Net Margin %", 10, 200, 40)
-        base_dine = total_cost_absorbed * (1 + margin_pct / 100)
-        mrp_dine = base_dine * 1.13
-        mrp_delivery = (base_dine / 0.8) * 1.13
-        st.success(f"Dine-In MRP: रू {mrp_dine:.2f} | Delivery MRP: रू {mrp_delivery:.2f}")
+    ca, cb = st.columns(2)
+    with ca:
+        loss_pct = st.number_input("Wastage & Buffer %", value=12.0)
+        pack_cost = st.number_input("Packaging Cost/piece", value=15.0)
 
-    if st.button("💾 Save Product to Master List"):
-        st.session_state.master_records.append({
-            "Product Info": {"Name": product_name, "Yield": yield_qty, "Raw Mat/Unit": round(raw_mat_unit, 2),
-                             "Dine-In MRP": round(mrp_dine, 2), "Delivery MRP": round(mrp_delivery, 2)},
-            "Recipe": st.session_state.ingredients
-        })
-        st.toast("Product Saved!")
+        raw_mat_per_unit = total_recipe_cost / yield_qty if yield_qty > 0 else 0
+        cost_with_wastage = raw_mat_per_unit * (1 + (loss_pct / 100))
+        final_cost_absorbed = cost_with_wastage + pack_cost + fixed_share_per_unit
 
-    # --- MASTER RECORDS & CONFIRMED RESET ---
+    with cb:
+        margin = st.slider("Target Margin %", 10, 200, 40)
+        base_piece = final_cost_absorbed * (1 + (margin / 100))
+        mrp_per_piece = round((base_piece * 1.13) / 5) * 5
+        mrp_full_batch = mrp_per_piece * yield_qty
+        mrp_delivery = round(((base_piece / 0.8) * 1.13) / 5) * 5
+        st.metric("Per Piece MRP", f"रू {mrp_per_piece:.2f}")
+        st.success(f"**Full Batch MRP: रू {mrp_full_batch:.2f}**")
+
+    # --- 6. SAVE & DELETE ---
+    sc1, sc2 = st.columns(2)
+    with sc1:
+        if st.button("💾 Save Product", use_container_width=True):
+            new_entry = {
+                "Product Info": {
+                    "Name": product_name, "Yield": yield_qty, "Raw Mat/Unit": round(raw_mat_per_unit, 2),
+                    "Full Batch MRP": mrp_full_batch, "Per Piece MRP": mrp_per_piece, "Delivery MRP": mrp_delivery
+                },
+                "Recipe": copy.deepcopy(st.session_state.ingredients)
+            }
+            idx = next(
+                (i for i, r in enumerate(st.session_state.master_records) if r["Product Info"]["Name"] == product_name),
+                None)
+            if idx is not None:
+                st.session_state.master_records[idx] = new_entry
+            else:
+                st.session_state.master_records.append(new_entry)
+            st.success(f"'{product_name}' Saved!")
+            st.rerun()
+
+    with sc2:
+        if st.session_state.master_records:
+            to_delete = st.selectbox("Select Product to Remove", options=["-- Select --"] + existing_names)
+            if st.button("🗑️ Delete Selected Product", type="secondary", use_container_width=True):
+                if to_delete != "-- Select --":
+                    st.session_state.master_records = [r for r in st.session_state.master_records if
+                                                       r["Product Info"]["Name"] != to_delete]
+                    st.warning(f"'{to_delete}' removed.")
+                    st.rerun()
+
+    # --- 7. MASTER LIST ---
     if st.session_state.master_records:
         st.divider()
-        st.subheader("📋 Master List & Export")
+        st.subheader("📋 Master Database")
+        export_rows = []
+        cols_order = ["Product/Ingredient", "Qty", "Unit", "Price/Unit", "Total Cost", "Raw Mat/Unit", "Yield",
+                      "Full Batch MRP", "Per Piece MRP", "Delivery MRP"]
 
-        # Reset Confirmation Logic
-        if "confirm_reset" not in st.session_state:
-            st.session_state.confirm_reset = False
-
-        if not st.session_state.confirm_reset:
-            if st.button("❌ Reset All Records"):
-                st.session_state.confirm_reset = True
-                st.rerun()
-        else:
-            st.warning("Are you sure? This will wipe all unsaved changes in the current list.")
-            cr1, cr2 = st.columns(2)
-            if cr1.button("YES, I'm Sure"):
-                st.session_state.master_records = []
-                st.session_state.confirm_reset = False
-                st.rerun()
-            if cr2.button("NO, Cancel"):
-                st.session_state.confirm_reset = False
-                st.rerun()
-
-        # Build Export Data
-        export_data = []
-        for record in st.session_state.master_records:
-            info = record['Product Info']
-            export_data.append({"Product/Ingredient": f"--- PRODUCT: {info['Name']} ---", "Yield": info['Yield'],
-                                "Raw Mat/Unit": info['Raw Mat/Unit'], "Dine-In MRP": info['Dine-In MRP'],
-                                "Delivery MRP": info['Delivery MRP']})
-            for ing in record['Recipe']:
-                if ing['item']:
-                    export_data.append({"Product/Ingredient": ing['item'], "Qty": ing['qty'], "Unit": ing['unit'],
+        for rec in st.session_state.master_records:
+            info = rec["Product Info"]
+            export_rows.append({
+                "Product/Ingredient": f"--- PRODUCT: {info['Name']} ---",
+                "Raw Mat/Unit": info['Raw Mat/Unit'], "Yield": info['Yield'],
+                "Full Batch MRP": info['Full Batch MRP'], "Per Piece MRP": info['Per Piece MRP'],
+                "Delivery MRP": info['Delivery MRP']
+            })
+            for ing in rec["Recipe"]:
+                if ing["item"]:
+                    export_rows.append({"Product/Ingredient": ing["item"], "Qty": ing["qty"], "Unit": ing['unit'],
                                         "Price/Unit": ing['price_per_unit'], "Total Cost": ing['total']})
-            export_data.append({k: "" for k in ["Product/Ingredient"]})
+            export_rows.append({c: "" for c in cols_order})
 
-        df_export = pd.DataFrame(export_data)
-        st.dataframe(df_export)
+        df_final = pd.DataFrame(export_rows).reindex(columns=cols_order).fillna("")
+        st.dataframe(df_final.astype(str), width='stretch')
 
-        # Download
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df_export.to_excel(writer, index=False, sheet_name='Recipes')
-
-        st.download_button("📥 Download Excel Sheet", data=output.getvalue(), file_name="bakery_recipe_book.xlsx")
+        out = BytesIO()
+        with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
+            df_final.to_excel(writer, index=False)
+        st.download_button("📥 Download Master Excel", data=out.getvalue(), file_name="bakery_database.xlsx")
 
 
 if __name__ == "__main__":
