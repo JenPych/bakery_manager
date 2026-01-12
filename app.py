@@ -11,9 +11,7 @@ except ImportError:
 
 def ultimate_bakery_manager():
     st.set_page_config(page_title="Bakery Master Pro", layout="wide")
-    st.title("🇳🇵 Bakery Master: Pro Pricing & Margin Tracker")
 
-    # --- 1. SESSION STATE ---
     if 'master_records' not in st.session_state:
         st.session_state.master_records = []
     if 'ingredients' not in st.session_state:
@@ -23,8 +21,10 @@ def ultimate_bakery_manager():
     if 'recipe_version' not in st.session_state:
         st.session_state.recipe_version = 0
 
-    # --- 2. SIDEBAR: OVERHEADS ---
-    st.sidebar.header("🏢 Monthly Fixed Overheads")
+    menu = st.sidebar.radio("Go To:", ["Recipe & MRP Manager", "Monthly Profit Forecast"])
+
+    st.sidebar.divider()
+    st.sidebar.header("🏢 Fixed Overheads")
     rent = st.sidebar.number_input("Monthly Rent (रू)", value=45000)
     salaries = st.sidebar.number_input("Staff Salaries (रू)", value=90000)
     utilities = st.sidebar.number_input("Utility Bills (रू)", value=8000)
@@ -33,194 +33,225 @@ def ultimate_bakery_manager():
 
     monthly_dep = (asset_val / lifespan) / 12 if lifespan > 0 else 0
     total_fixed_monthly = rent + salaries + utilities + monthly_dep
-    target_volume = st.sidebar.number_input("Total Monthly Units (Pieces Sold)", value=2000, min_value=1)
+    target_volume = st.sidebar.number_input("Total Monthly Units (Pieces)", value=2000, min_value=1)
     fixed_share_per_unit = total_fixed_monthly / target_volume
 
-    # --- 3. DATA IMPORT ---
-    st.sidebar.header("📂 Data Continuity")
-    uploaded_file = st.sidebar.file_uploader("Upload Excel", type=["xlsx"])
-    if uploaded_file is not None and st.sidebar.button("Import Data"):
-        try:
-            df_import = pd.read_excel(uploaded_file).fillna("")
-            temp_records = []
-            current_product = None
+    if menu == "Recipe & MRP Manager":
+        st.title("🥣 Recipe & MRP Manager")
 
-            def safe_float(x):
-                try:
-                    clean_x = str(x).strip()
-                    return float(clean_x) if clean_x != "" else 0.0
-                except:
-                    return 0.0
+        st.sidebar.header("📂 Data Continuity")
+        uploaded_file = st.sidebar.file_uploader("Upload Excel", type=["xlsx"])
+        if uploaded_file is not None and st.sidebar.button("Import Data"):
+            try:
+                df_import = pd.read_excel(uploaded_file).fillna("")
+                temp_records = []
+                current_product = None
 
-            for _, row in df_import.iterrows():
-                val = str(row['Product/Ingredient']).strip()
-                if not val: continue
-                if "--- PRODUCT:" in val:
-                    name = val.replace("--- PRODUCT: ", "").replace(" ---", "")
-                    current_product = {
-                        "Product Info": {
-                            "Name": name,
-                            "Yield": safe_float(row.get('Yield', 1.0)),
-                            "Raw Mat/Unit": safe_float(row.get('Raw Mat/Unit', 0.0)),
-                            "Wt/Pc": safe_float(row.get('Wt/Pc', 0.0)),
-                            "Full Batch MRP": safe_float(row.get('Full Batch MRP', 0.0)),
-                            "Per Piece MRP": safe_float(row.get('Per Piece MRP', 0.0)),
-                            "Delivery MRP": safe_float(row.get('Delivery MRP', 0.0)),
-                            "Margin %": safe_float(row.get('Margin %', 0.0))
-                        },
-                        "Recipe": []
-                    }
-                    temp_records.append(current_product)
-                elif current_product and not val.startswith("---"):
-                    current_product["Recipe"].append({
-                        "item": val, "qty": safe_float(row.get('Qty', 0.0)),
-                        "unit": str(row.get('Unit', 'g')),
-                        "price_per_unit": safe_float(row.get('Price/Unit', 0.0)),
-                        "total": safe_float(row.get('Total Cost', 0.0))
-                    })
-            st.session_state.master_records = temp_records
-            st.sidebar.success(f"Imported {len(temp_records)} Products")
-        except Exception as e:
-            st.sidebar.error(f"Import Error: {e}")
+                def safe_float(x):
+                    try:
+                        return round(float(str(x).strip()), 2) if str(x).strip() != "" else 0.0
+                    except:
+                        return 0.0
 
-    # --- 4. RECIPE EDITOR ---
-    st.header("🥣 Recipe Editor")
-    existing_names = [r["Product Info"]["Name"] for r in st.session_state.master_records]
-    col_name, col_status = st.columns([2, 1])
-    product_name = col_name.text_input("Product Name", value="New Product")
+                for _, row in df_import.iterrows():
+                    val = str(row['Product/Ingredient']).strip()
+                    if not val: continue
+                    if "--- PRODUCT:" in val:
+                        name = val.replace("--- PRODUCT: ", "").replace(" ---", "")
+                        current_product = {
+                            "Product Info": {
+                                "Name": name, "Yield": safe_float(row.get('Yield', 1.0)),
+                                "Raw Mat/Unit": safe_float(row.get('Raw Mat/Unit', 0.0)),
+                                "Wt/Pc": safe_float(row.get('Wt/Pc', 0.0)),
+                                "Full Batch MRP": safe_float(row.get('Full Batch MRP', 0.0)),
+                                "Per Piece MRP": safe_float(row.get('Per Piece MRP', 0.0)),
+                                "Delivery MRP": safe_float(row.get('Delivery MRP', 0.0)),
+                                "Margin %": safe_float(row.get('Margin %', 0.0))
+                            },
+                            "Recipe": []
+                        }
+                        temp_records.append(current_product)
+                    elif current_product and not val.startswith("---"):
+                        current_product["Recipe"].append({
+                            "item": val, "qty": safe_float(row.get('Qty', 0.0)),
+                            "unit": str(row.get('Unit', 'g')),
+                            "price_per_unit": safe_float(row.get('Price/Unit', 0.0)),
+                            "total": safe_float(row.get('Total Cost', 0.0))
+                        })
+                st.session_state.master_records = temp_records
+                st.sidebar.success(f"Imported {len(temp_records)} Products")
+            except Exception as e:
+                st.sidebar.error(f"Import Error: {e}")
 
-    if product_name in existing_names:
-        col_status.info("🔄 Product Data Found")
-        if st.button("Load Recipe"):
-            match = next(
-                item for item in st.session_state.master_records if item["Product Info"]["Name"] == product_name)
-            st.session_state.ingredients = copy.deepcopy(match["Recipe"])
-            st.session_state.current_yield = float(match["Product Info"]["Yield"])
+        existing_names = [r["Product Info"]["Name"] for r in st.session_state.master_records]
+        col_name, col_status = st.columns([2, 1])
+        product_name = col_name.text_input("Product Name", value="New Product")
+
+        if product_name in existing_names:
+            col_status.info("🔄 Product Data Found")
+            if st.button("Load Recipe"):
+                match = next(
+                    item for item in st.session_state.master_records if item["Product Info"]["Name"] == product_name)
+                st.session_state.ingredients = copy.deepcopy(match["Recipe"])
+                st.session_state.current_yield = float(match["Product Info"]["Yield"])
+                st.session_state.recipe_version += 1
+                st.rerun()
+
+        v = st.session_state.recipe_version
+        updated_ingredients = []
+        for i, ing in enumerate(st.session_state.ingredients):
+            c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 2, 1])
+            i_name = c1.text_input("Ingredient Name", value=ing["item"], key=f"n_{v}_{i}")
+            i_qty = c2.number_input("Qty", value=float(ing["qty"]), key=f"q_{v}_{i}", format="%.2f")
+            i_unit = c3.selectbox("Unit", ["g", "kg", "ml", "ltr", "pcs"],
+                                  index=["g", "kg", "ml", "ltr", "pcs"].index(ing["unit"]), key=f"u_{v}_{i}")
+            i_price = c4.number_input("Price/Unit", value=float(ing["price_per_unit"]), key=f"p_{v}_{i}", format="%.2f")
+            i_total = round(i_qty * i_price, 2)
+            c5.write(f"**Total**\nरू {i_total:.2f}")
+            updated_ingredients.append(
+                {"item": i_name, "qty": i_qty, "unit": i_unit, "price_per_unit": i_price, "total": i_total})
+
+        st.session_state.ingredients = updated_ingredients
+
+        total_g = sum(ing["qty"] for ing in updated_ingredients if ing["unit"] in ["g", "ml"])
+        total_kg = sum(ing["qty"] for ing in updated_ingredients if ing["unit"] in ["kg", "ltr"])
+        grand_weight = round(total_g + (total_kg * 1000), 2)
+
+        btn1, btn2 = st.columns([1, 5])
+        if btn1.button("➕ Add Row"):
+            st.session_state.ingredients.append({"item": "", "qty": 0.0, "unit": "g", "price_per_unit": 0.0})
+            st.rerun()
+        if btn2.button("🗑️ Reset All"):
+            st.session_state.ingredients = [{"item": "", "qty": 0.0, "unit": "g", "price_per_unit": 0.0}]
+            st.session_state.current_yield = 1.0
             st.session_state.recipe_version += 1
             st.rerun()
 
-    v = st.session_state.recipe_version
-    updated_ingredients = []
-    for i, ing in enumerate(st.session_state.ingredients):
-        c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 2, 1])
-        i_name = c1.text_input("Ingredient Name", value=ing["item"], key=f"n_{v}_{i}")
-        i_qty = c2.number_input("Qty", value=float(ing["qty"]), key=f"q_{v}_{i}", format="%.2f")
-        i_unit = c3.selectbox("Unit", ["g", "kg", "ml", "ltr", "pcs"],
-                              index=["g", "kg", "ml", "ltr", "pcs"].index(ing["unit"]), key=f"u_{v}_{i}")
-        i_price = c4.number_input("Price/Unit", value=float(ing["price_per_unit"]), key=f"p_{v}_{i}", format="%.2f")
-        i_total = i_qty * i_price
-        c5.write(f"**Total**\nरू {i_total:.2f}")
-        updated_ingredients.append(
-            {"item": i_name, "qty": i_qty, "unit": i_unit, "price_per_unit": i_price, "total": i_total})
-
-    st.session_state.ingredients = updated_ingredients
-
-    # --- 5. BATCH WEIGHT LOGIC ---
-    total_g = sum(ing["qty"] for ing in updated_ingredients if ing["unit"] in ["g", "ml"])
-    total_kg = sum(ing["qty"] for ing in updated_ingredients if ing["unit"] in ["kg", "ltr"])
-    grand_weight = total_g + (total_kg * 1000)
-
-    btn1, btn2 = st.columns([1, 5])
-    if btn1.button("➕ Add Row"):
-        st.session_state.ingredients.append({"item": "", "qty": 0.0, "unit": "g", "price_per_unit": 0.0})
-        st.rerun()
-    if btn2.button("🗑️ Reset All"):
-        st.session_state.ingredients = [{"item": "", "qty": 0.0, "unit": "g", "price_per_unit": 0.0}]
-        st.session_state.current_yield = 1.0
-        st.session_state.recipe_version += 1
-        st.rerun()
-
-    # --- 6. CALCULATIONS & MRP ---
-    st.divider()
-    total_recipe_cost = sum(ing["total"] for ing in st.session_state.ingredients)
-    yield_qty = st.number_input("Yield (Total pieces per batch)", value=st.session_state.current_yield, min_value=0.01,
-                                key=f"y_{v}")
-    st.session_state.current_yield = yield_qty
-
-    wt_per_pc = grand_weight / yield_qty if yield_qty > 0 else 0
-    st.info(f"⚖️ **Total Batch Weight:** {grand_weight:.2f}g | **Weight per Piece:** {wt_per_pc:.2f}g")
-
-    ca, cb = st.columns(2)
-    with ca:
-        loss_pct = st.number_input("Wastage & Buffer %", value=12.0)
-        pack_cost = st.number_input("Packaging Cost/piece", value=15.0)
-        raw_mat_per_unit = total_recipe_cost / yield_qty if yield_qty > 0 else 0
-        cost_with_wastage = raw_mat_per_unit * (1 + (loss_pct / 100))
-        final_cost_absorbed = cost_with_wastage + pack_cost + fixed_share_per_unit
-
-    with cb:
-        margin_pct = st.slider("Target Margin %", 10, 200, 40)
-        base_piece = final_cost_absorbed * (1 + (margin_pct / 100))
-        mrp_per_piece = round((base_piece * 1.13) / 5) * 5
-        mrp_full_batch = mrp_per_piece * yield_qty
-        mrp_delivery = round(((base_piece / 0.8) * 1.13) / 5) * 5
-        st.metric("Per Piece MRP", f"रू {mrp_per_piece:.2f}")
-        st.success(f"**Full Batch MRP: रू {mrp_full_batch:.2f}**")
-
-    # --- 7. SAVE & DELETE (2026 SYNTAX) ---
-    sc1, sc2 = st.columns(2)
-    with sc1:
-        if st.button("💾 Finalize & Save", width='stretch'):
-            new_entry = {
-                "Product Info": {
-                    "Name": product_name, "Yield": yield_qty, "Wt/Pc": round(wt_per_pc, 2),
-                    "Raw Mat/Unit": round(raw_mat_per_unit, 2), "Full Batch MRP": mrp_full_batch,
-                    "Per Piece MRP": mrp_per_piece, "Delivery MRP": mrp_delivery,
-                    "Margin %": margin_pct
-                },
-                "Recipe": copy.deepcopy(st.session_state.ingredients)
-            }
-            idx = next(
-                (i for i, r in enumerate(st.session_state.master_records) if r["Product Info"]["Name"] == product_name),
-                None)
-            if idx is not None:
-                st.session_state.master_records[idx] = new_entry
-            else:
-                st.session_state.master_records.append(new_entry)
-            st.success(f"'{product_name}' saved!")
-            st.rerun()
-
-    with sc2:
-        if st.session_state.master_records:
-            to_delete = st.selectbox("Delete Product", options=["-- Select --"] + existing_names)
-            if st.button("🗑️ Remove from Master", type="secondary", width='stretch'):
-                if to_delete != "-- Select --":
-                    st.session_state.master_records = [r for r in st.session_state.master_records if
-                                                       r["Product Info"]["Name"] != to_delete]
-                    st.rerun()
-
-    # --- 8. MASTER LIST (WITH MARGIN AS LAST COLUMN) ---
-    if st.session_state.master_records:
         st.divider()
-        st.subheader("📋 Master Database")
-        export_rows = []
-        cols_order = ["Product/Ingredient", "Qty", "Unit", "Price/Unit", "Total Cost", "Raw Mat/Unit", "Wt/Pc", "Yield",
-                      "Full Batch MRP", "Per Piece MRP", "Delivery MRP", "Margin %"]
+        total_recipe_cost = sum(ing["total"] for ing in st.session_state.ingredients)
+        yield_qty = st.number_input("Yield (Pieces/Batch)", value=st.session_state.current_yield, min_value=0.01,
+                                    key=f"y_{v}")
+        st.session_state.current_yield = yield_qty
+        wt_per_pc = round(grand_weight / yield_qty, 2) if yield_qty > 0 else 0
+        st.info(f"⚖️ **Batch Weight:** {grand_weight:.2f}g | **Weight/Piece:** {wt_per_pc:.2f}g")
 
-        for rec in st.session_state.master_records:
-            info = rec["Product Info"]
-            export_rows.append({
-                "Product/Ingredient": f"--- PRODUCT: {info['Name']} ---",
-                "Raw Mat/Unit": info['Raw Mat/Unit'], "Wt/Pc": info.get('Wt/Pc', 0),
-                "Yield": info['Yield'], "Full Batch MRP": info['Full Batch MRP'],
-                "Per Piece MRP": info['Per Piece MRP'], "Delivery MRP": info['Delivery MRP'],
-                "Margin %": info.get('Margin %', 0)
-            })
-            for ing in rec["Recipe"]:
-                if ing["item"]:
-                    export_rows.append({
-                        "Product/Ingredient": ing["item"], "Qty": ing["qty"], "Unit": ing['unit'],
-                        "Price/Unit": ing['price_per_unit'], "Total Cost": ing['total']
-                    })
-            export_rows.append({c: "" for c in cols_order})
+        ca, cb = st.columns(2)
+        with ca:
+            loss_pct = st.number_input("Wastage & Buffer %", value=12.0)
+            pack_cost = st.number_input("Packaging Cost/piece", value=15.0)
+            raw_mat_per_unit = round(total_recipe_cost / yield_qty, 2) if yield_qty > 0 else 0
+            cost_with_wastage = raw_mat_per_unit * (1 + (loss_pct / 100))
+            final_cost_absorbed = round(cost_with_wastage + pack_cost + fixed_share_per_unit, 2)
+        with cb:
+            margin_pct = st.slider("Target Margin %", 10, 200, 40)
+            base_piece = final_cost_absorbed * (1 + (margin_pct / 100))
+            mrp_per_piece = round((base_piece * 1.13) / 5) * 5
+            mrp_full_batch = round(mrp_per_piece * yield_qty, 2)
+            mrp_delivery = round(((base_piece / 0.8) * 1.13) / 5) * 5
+            st.metric("Per Piece MRP", f"रू {mrp_per_piece:.2f}")
 
-        df_final = pd.DataFrame(export_rows).reindex(columns=cols_order).fillna("")
-        st.dataframe(df_final.astype(str), width='stretch')
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            if st.button("💾 Finalize & Save", use_container_width=True):
+                new_entry = {
+                    "Product Info": {
+                        "Name": product_name, "Yield": round(yield_qty, 2), "Wt/Pc": round(wt_per_pc, 2),
+                        "Raw Mat/Unit": round(raw_mat_per_unit, 2), "Full Batch MRP": round(mrp_full_batch, 2),
+                        "Per Piece MRP": round(mrp_per_piece, 2), "Delivery MRP": round(mrp_delivery, 2),
+                        "Margin %": round(margin_pct, 2),
+                        "Net Cost/Pc": round(final_cost_absorbed, 2),
+                        "Variable Cost/Pc": round(cost_with_wastage + pack_cost, 2)
+                    },
+                    "Recipe": copy.deepcopy(st.session_state.ingredients)
+                }
+                idx = next((i for i, r in enumerate(st.session_state.master_records) if
+                            r["Product Info"]["Name"] == product_name), None)
+                if idx is not None:
+                    st.session_state.master_records[idx] = new_entry
+                else:
+                    st.session_state.master_records.append(new_entry)
+                st.rerun()
+        with sc2:
+            if st.session_state.master_records:
+                to_delete = st.selectbox("Delete Product", options=["-- Select --"] + existing_names)
+                if st.button("🗑️ Remove", type="secondary", use_container_width=True):
+                    if to_delete != "-- Select --":
+                        st.session_state.master_records = [r for r in st.session_state.master_records if
+                                                           r["Product Info"]["Name"] != to_delete]
+                        st.rerun()
 
-        out = BytesIO()
-        with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
-            df_final.to_excel(writer, index=False)
-        st.download_button("📥 Download Master Excel", data=out.getvalue(), file_name="bakery_master_list.xlsx")
+        if st.session_state.master_records:
+            st.divider()
+            st.subheader("📋 Master Database")
+            export_rows = []
+            cols_order = ["Product/Ingredient", "Qty", "Unit", "Price/Unit", "Total Cost", "Raw Mat/Unit", "Wt/Pc",
+                          "Yield", "Full Batch MRP", "Per Piece MRP", "Delivery MRP", "Margin %"]
+            for rec in st.session_state.master_records:
+                info = rec["Product Info"]
+                export_rows.append(
+                    {"Product/Ingredient": f"--- PRODUCT: {info['Name']} ---", "Raw Mat/Unit": info['Raw Mat/Unit'],
+                     "Wt/Pc": info['Wt/Pc'], "Yield": info['Yield'], "Full Batch MRP": info['Full Batch MRP'],
+                     "Per Piece MRP": info['Per Piece MRP'], "Delivery MRP": info['Delivery MRP'],
+                     "Margin %": info['Margin %']})
+                for ing in rec["Recipe"]:
+                    if ing["item"]: export_rows.append(
+                        {"Product/Ingredient": ing["item"], "Qty": ing["qty"], "Unit": ing['unit'],
+                         "Price/Unit": ing['price_per_unit'], "Total Cost": ing['total']})
+                export_rows.append({c: "" for c in cols_order})
+
+            # Clean dataframe logic
+            df_final = pd.DataFrame(export_rows).reindex(columns=cols_order).fillna("")
+            # Rounding function for the dataframe display
+            st.dataframe(df_final.astype(str), width='stretch')
+
+            out = BytesIO()
+            with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
+                df_final.to_excel(writer, index=False)
+            st.download_button("📥 Download Master Excel", data=out.getvalue(),
+                               file_name="bakery_master_list_clean.xlsx")
+
+    elif menu == "Monthly Profit Forecast":
+        st.title("📈 Profit Forecast & Break-Even Analysis")
+        if not st.session_state.master_records:
+            st.warning("Please save recipes in the Manager first.")
+        else:
+            tab1, tab2 = st.tabs(["Sales Forecast", "Break-Even Calculator"])
+            with tab1:
+                total_rev, total_cost = 0, 0
+                for rec in st.session_state.master_records:
+                    info = rec["Product Info"]
+                    c1, c2, c3 = st.columns([2, 1, 2])
+                    vol = c1.number_input(f"Units of {info['Name']}", value=0, min_value=0,
+                                          key=f"forecast_{info['Name']}")
+                    unit_mrp, unit_cost = info['Per Piece MRP'], info.get('Net Cost/Pc', 0)
+                    sub_rev, sub_cost = vol * unit_mrp, vol * unit_cost
+                    profit = round(sub_rev - sub_cost, 2)
+                    c2.write(f"MRP: रू {unit_mrp}")
+                    c3.write(f"Profit: **रू {profit:,.2f}**")
+                    total_rev += sub_rev
+                    total_cost += sub_cost
+
+                st.divider()
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Total Revenue", f"रू {total_rev:,.0f}")
+                m2.metric("Total Prod. Cost", f"रू {total_cost:,.0f}")
+                m3.metric("Projected Monthly Net Profit", f"रू {round(total_rev - total_cost, 0):,.0f}")
+
+            with tab2:
+                st.subheader("How many units do I need to sell?")
+
+                st.write(f"Total Monthly Fixed Costs: **रू {total_fixed_monthly:,.2f}**")
+                selected_be = st.selectbox("Product for Break-Even",
+                                           options=[r["Product Info"]["Name"] for r in st.session_state.master_records])
+                if selected_be:
+                    prod = next(r for r in st.session_state.master_records if r["Product Info"]["Name"] == selected_be)
+                    info = prod["Product Info"]
+                    contribution = info["Per Piece MRP"] - info.get("Variable Cost/Pc", 0)
+                    if contribution > 0:
+                        be_units = int(total_fixed_monthly / contribution) + 1
+                        st.success(f"To break even with **{selected_be}**, sell **{be_units} units** per month.")
+                    else:
+                        st.error("MRP is too low to cover ingredient costs!")
 
 
 if __name__ == "__main__":
