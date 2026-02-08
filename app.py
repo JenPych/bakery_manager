@@ -215,6 +215,7 @@ def bagels_co_v11():
 
         df_view = pd.DataFrame(rows).astype(str).replace(["nan", "NaN", "None"], "")
         st.dataframe(df_view, use_container_width=True)
+        #https://beeg.com/-0223097914729507
 
         out = BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
