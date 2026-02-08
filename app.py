@@ -3,8 +3,8 @@ import pandas as pd
 from io import BytesIO
 
 
-def bagels_co_v11():
-    st.set_page_config(page_title="Bagels & Co. | Master Engine", layout="wide")
+def bagels_co_master_engine():
+    st.set_page_config(page_title="Bagels & Co. | Master Business Engine", layout="wide")
 
     # --- 1. SESSION STATE ---
     if 'master_records' not in st.session_state: st.session_state.master_records = []
@@ -20,30 +20,44 @@ def bagels_co_v11():
         except:
             return 0.0
 
-    # --- 2. SIDEBAR: DATA MANAGEMENT (RE-ADDED RESTORE) ---
+    # --- 2. SIDEBAR: DATA MANAGEMENT ---
     st.sidebar.header("📁 Data Management")
 
-    # SYNC PRICES
+    # SYNC PRICES (Logic fixed for your specific Procurement file)
     price_file = st.sidebar.file_uploader("1. Sync Market Prices", type=["xlsx", "csv"])
     if price_file and st.sidebar.button("🔄 Update Market Prices"):
         try:
             df_raw = pd.read_excel(price_file) if price_file.name.endswith('.xlsx') else pd.read_csv(price_file)
             actual_data = None
-            for i in range(len(df_raw)):
-                row_vals = [str(val) for val in df_raw.iloc[i].values]
-                if any("Ingredient Name" in v for v in row_vals):
-                    df_raw.columns = df_raw.iloc[i]
-                    actual_data = df_raw.iloc[i + 1:].copy()
-                    break
+
+            # Direct Check: Are headers already correct?
+            if "Ingredient Name" in df_raw.columns and "Price per Unit" in df_raw.columns:
+                actual_data = df_raw
+            else:
+                # Search first 10 rows for header row
+                for i in range(min(10, len(df_raw))):
+                    row_vals = [str(val) for val in df_raw.iloc[i].values]
+                    if any("Ingredient Name" in v for v in row_vals):
+                        df_raw.columns = df_raw.iloc[i]
+                        actual_data = df_raw.iloc[i + 1:].copy()
+                        break
+
             if actual_data is not None:
-                new_lib = {str(row.get('Ingredient Name', '')).strip().lower(): rd(row.get('Price per Unit', 0))
-                           for _, row in actual_data.iterrows() if str(row.get('Ingredient Name', '')) != "nan"}
+                actual_data.columns = [str(c).strip() for c in actual_data.columns]
+                new_lib = {
+                    str(row.get('Ingredient Name', '')).strip().lower(): rd(row.get('Price per Unit', 0))
+                    for _, row in actual_data.iterrows()
+                    if
+                    str(row.get('Ingredient Name', '')) != "nan" and str(row.get('Ingredient Name', '')).strip() != ""
+                }
                 st.session_state.price_dict = new_lib
                 st.sidebar.success(f"✅ {len(new_lib)} Prices Synced!")
+            else:
+                st.sidebar.error("Error: Could not find 'Ingredient Name' column.")
         except Exception as e:
             st.sidebar.error(f"Sync failed: {e}")
 
-    # RESTORE DATABASE (FIXED)
+    # RESTORE DATABASE
     restore_file = st.sidebar.file_uploader("2. Restore Master List", type=["xlsx", "csv"])
     if restore_file and st.sidebar.button("📂 Run Full Restore"):
         try:
@@ -69,9 +83,11 @@ def bagels_co_v11():
                     }
                     temp_recs.append(curr_prod)
                 elif curr_prod and item_str and not item_str.startswith("---") and item_str != "":
-                    curr_prod["Recipe"].append(
-                        {"item": item_str, "qty": rd(row.get('Qty', 0)), "unit": str(row.get('Unit', 'g')),
-                         "price_per_unit": rd(row.get('Price/Unit', 0))})
+                    curr_prod["Recipe"].append({
+                        "item": item_str, "qty": rd(row.get('Qty', 0)),
+                        "unit": str(row.get('Unit', 'g')),
+                        "price_per_unit": rd(row.get('Price/Unit', 0))
+                    })
             st.session_state.master_records = temp_recs
             st.sidebar.success("✅ Database & Strategies Restored!")
             st.rerun()
@@ -79,12 +95,12 @@ def bagels_co_v11():
             st.sidebar.error(f"Restore Error: {e}")
 
     # --- 3. TOP NAVIGATION ---
-    st.title("Bagels & Co. | Master Business Engine")
+    st.title("🥯 Bagels & Co. | Master Business Engine")
     n1, n2 = st.columns([2, 1])
     with n1:
         if st.session_state.master_records:
             names = sorted(list(set(r["Info"]["Name"] for r in st.session_state.master_records)))
-            sel = st.selectbox("📂 Load Product", ["-- Select --"] + names)
+            sel = st.selectbox("📂 Load Existing Product", ["-- Select --"] + names)
             if st.button("📂 Open Product") and sel != "-- Select --":
                 record = next(r for r in st.session_state.master_records if r["Info"]["Name"] == sel)
                 st.session_state.recipe_buffer = [
@@ -106,13 +122,13 @@ def bagels_co_v11():
     # --- 4. FIXED OVERHEADS ---
     with st.expander("🏢 Monthly Business Overheads"):
         o1, o2, o3 = st.columns(3)
-        rent, sals, utils = o1.number_input("Rent", 0.0, value=159000.0), o2.number_input("Salaries", 0.0,
-                                                                                         value=120000.0), o3.number_input(
-            "Utilities", 0.0, value=50000.0)
+        rent = o1.number_input("Rent", 0.0, value=159000.0)
+        sals = o2.number_input("Salaries", 0.0, value=120000.0)
+        utils = o3.number_input("Utilities", 0.0, value=50000.0)
         o4, o5, o6 = st.columns(3)
-        ads, assets, units = o4.number_input("Marketing", 0.0, value=5000.0), o5.number_input("Asset Value", 0.0,
-                                                                                              value=1900000.0), o6.number_input(
-            "Total Monthly Units", 1.0, value=2000.0)
+        ads = o4.number_input("Marketing", 0.0, value=5000.0)
+        assets = o5.number_input("Asset Value", 0.0, value=1900000.0)
+        units = o6.number_input("Total Monthly Units", 1.0, value=2000.0)
         dep_years = st.slider("Asset Depreciation Years", 1, 20, 5)
         avg_oh_per_unit = rd((rent + sals + utils + ads + (assets / (dep_years * 12))) / units)
         st.info(f"Average System Overhead/Unit: **रू {avg_oh_per_unit:.2f}**")
@@ -120,31 +136,49 @@ def bagels_co_v11():
     # --- 5. RECIPE EDITOR ---
     prod_name = st.text_input("Product Name", value=st.session_state.editing_name,
                               key=f"pname_{st.session_state.load_id}")
+
     new_buffer = []
+    to_delete = None
+
     for i, row in enumerate(st.session_state.recipe_buffer):
-        cols = st.columns([2.5, 1, 1, 1.2, 1.2, 0.5])
+        cols = st.columns([2.5, 1, 1, 1.2, 1.2, 0.4, 0.4])
         v, lid = row.get('search_version', 0), st.session_state.load_id
-        name = cols[0].text_input("Item", value=row['item'], key=f"n_{i}_{v}_{lid}")
+
+        name = cols[0].text_input("Item", value=row['item'], key=f"n_{i}_{v}_{lid}", placeholder="e.g. Aata")
         qty = cols[1].number_input("Qty", min_value=0.0, value=float(row['qty']), key=f"q_{i}_{v}_{lid}")
         unit = cols[2].selectbox("Unit", ["g", "kg", "ml", "ltr", "pcs"], index=0, key=f"u_{i}_{v}_{lid}")
         price = cols[3].number_input("Price/Unit", min_value=0.0, value=float(row['price']), key=f"p_{i}_{v}_{lid}")
+
         row_total = rd(qty * price)
-        cols[4].write(f"रू {row_total:.2f}")
-        if cols[5].button("🔍", key=f"btn_{i}_{lid}"):
+        cols[4].markdown(f"<div style='margin-top:30px'>रू {row_total:.2f}</div>", unsafe_allow_html=True)
+
+        if cols[5].button("🔍", key=f"lk_{i}_{lid}"):
             lookup = name.strip().lower()
             if lookup in st.session_state.price_dict:
-                st.session_state.recipe_buffer[i] = {"item": name, "qty": qty, "unit": unit,
-                                                     "price": st.session_state.price_dict[lookup],
-                                                     "search_version": v + 1}
+                row['price'] = st.session_state.price_dict[lookup]
+                row['search_version'] = v + 1
                 st.rerun()
-        new_buffer.append(
-            {"item": name, "qty": qty, "unit": unit, "price": price, "total": row_total, "search_version": v})
+            else:
+                st.toast(f"'{name}' not found in Price List", icon="⚠️")
+
+        if cols[6].button("🗑️", key=f"del_{i}_{lid}"):
+            to_delete = i
+
+        new_buffer.append({"item": name, "qty": qty, "unit": unit, "price": price, "total": row_total,
+                           "search_version": row.get('search_version', 0)})
+
+    if to_delete is not None:
+        new_buffer.pop(to_delete)
+        st.session_state.recipe_buffer = new_buffer
+        st.rerun()
+
     st.session_state.recipe_buffer = new_buffer
+
     if st.button("➕ Add Row"):
         st.session_state.recipe_buffer.append({"item": "", "qty": 0.0, "unit": "g", "price": 0.0, "search_version": 0})
         st.rerun()
 
-    # --- 6. CALCULATIONS ---
+    # --- 6. CALCULATIONS & STRATEGY ---
     st.divider()
     st.subheader("⚖️ Strategy & Pricing")
     f1, f2, f3 = st.columns(3)
@@ -171,10 +205,10 @@ def bagels_co_v11():
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Raw Material", f"रू {raw_mat_per_unit}")
     c2.metric("Overhead", f"रू {applied_oh}")
-    c3.metric("Total Cost", f"रू {final_cost}")
+    c3.metric("Total Unit Cost", f"रू {final_cost}")
     c4.metric("Final MRP", f"रू {mrp}")
 
-    if st.button("💾 Save Product & Strategy", type="primary"):
+    if st.button("💾 Save Product & Strategy", type="primary", use_container_width=True):
         entry = {"Info": {"Name": prod_name, "Raw Mat/Unit": raw_mat_per_unit, "MRP": mrp, "Margin %": margin_input,
                           "OH Alloc %": oh_alloc, "Yield": yld, "Waste %": waste, "Total Cost": batch_waste},
                  "Recipe": [{"item": i['item'], "qty": i['qty'], "unit": i['unit'], "price_per_unit": i['price']} for i
@@ -185,7 +219,6 @@ def bagels_co_v11():
         else:
             st.session_state.master_records.append(entry)
         st.success(f"✅ Strategy for '{prod_name}' saved to Database!")
-        st.rerun()
 
     # --- 7. DATABASE VIEW ---
     if st.session_state.master_records:
@@ -215,13 +248,13 @@ def bagels_co_v11():
 
         df_view = pd.DataFrame(rows).astype(str).replace(["nan", "NaN", "None"], "")
         st.dataframe(df_view, use_container_width=True)
-        #https://beeg.com/-0223097914729507
 
         out = BytesIO()
         with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
             pd.DataFrame(rows).to_excel(writer, index=False, sheet_name='Costing_Summary')
-        st.download_button("📥 Download Excel Database", out.getvalue(), "bagels_business_master.xlsx")
+        st.download_button("📥 Download Excel Database", out.getvalue(), "bagels_business_master.xlsx",
+                           use_container_width=True)
 
 
 if __name__ == "__main__":
-    bagels_co_v11()
+    bagels_co_master_engine()
