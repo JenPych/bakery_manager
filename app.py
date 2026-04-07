@@ -5,9 +5,11 @@ import uuid
 
 # --- 1. DATA PERSISTENCE (GOOGLE SHEETS) ---
 
+
 # Establish the connection
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+conn.read(worksheet="Market Prices")
 
 def save_all_to_sheets():
     """Converts session state to a flat dataframe and pushes to Google Sheets."""
