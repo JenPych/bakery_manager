@@ -300,6 +300,48 @@ def bagels_co_master_engine():
     if st.session_state.save_success:
         st.success(f"**{p_name}** is now synced with the cloud!")
 
+    # --- REVIEW SECTION ---
+    st.divider()
+    st.subheader("📊 Master Database Review")
+
+    if st.session_state.master_records:
+        # 1. Flatten the nested records for display
+        display_data = []
+        for r in st.session_state.master_records:
+            inf = r["Info"]
+            display_data.append({
+                "Product Name": inf.get("Name", "N/A"),
+                "Unit Cost (Raw)": f"रू {inf.get('Raw Mat/Unit', 0)}",
+                "Packaging": f"रू {inf.get('Pkg/Unit', 0)}",
+                "OH Alloc %": f"{inf.get('OH Alloc %', 0)}%",
+                "Margin": f"{inf.get('Margin %', 0)}%",
+                "Final MRP": f"रू {inf.get('MRP', 0)}",
+                "Ingredients Count": len(r.get("Recipe", []))
+            })
+
+        # 2. Convert to DataFrame
+        df_review = pd.DataFrame(display_data)
+
+        # 3. Display the interactive table
+        st.dataframe(
+            df_review,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Final MRP": st.column_config.TextColumn("Final MRP", help="Price including VAT (if applicable)"),
+                "Product Name": st.column_config.TextColumn("Product Name", width="medium")
+            }
+        )
+
+        # Optional: Quick Stats
+        c1, c2 = st.columns(2)
+        c1.caption(f"Total Products in Database: {len(st.session_state.master_records)}")
+        if c2.button("🗑️ Clear Local Cache", help="This only clears the app view, not the Google Sheet"):
+            st.session_state.master_records = []
+            st.rerun()
+    else:
+        st.info("No products found in the database. Add a new product or check your Google Sheet connection.")
+
 
 if __name__ == "__main__":
     bagels_co_master_engine()
