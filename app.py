@@ -3,18 +3,55 @@ import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 import uuid
 
-# --- 1. DATA PERSISTENCE (GOOGLE SHEETS) ---
-# This replaces your "bagels_persistence.json"
+# --- 1. DATA PERSISTENCE & CLOUD SYNC ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-conn.read(worksheet= 'Market Prices')
+
+def rd(v):
+    """Utility to safely round values to 2 decimal places."""
+    try:
+        return round(float(v), 2)
+    except:
+        return 0.0
+
+
+def load_market_prices():
+    """Reads 'Market Prices' tab and dynamically finds the correct columns."""
+    try:
+        # Fetch data from the 2nd tab
+        df_p = conn.read(worksheet="Market Prices", ttl=0)
+
+        if df_p is None or df_p.empty:
+            st.sidebar.warning("Market Prices sheet is empty.")
+            return {}
+
+        # --- DYNAMIC COLUMN SEARCH ---
+        # Define the exact headers you are looking for
+        NAME_COL_HEADER = "Ingredient Name"
+        PRICE_COL_HEADER = "Price per Unit"
+
+        # Check if the headers exist in the dataframe
+        if NAME_COL_HEADER not in df_p.columns or PRICE_COL_HEADER not in df_p.columns:
+            st.sidebar.error(f"Missing Headers! Need: '{NAME_COL_HEADER}' and '{PRICE_COL_HEADER}'")
+            return {}
+
+        # Create the dictionary using the found headers
+        prices = {
+            str(row[NAME_COL_HEADER]).strip().lower(): rd(row[PRICE_COL_HEADER])
+            for _, row in df_p.iterrows()
+            if pd.notnull(row[NAME_COL_HEADER])  # Skip empty rows
+        }
+        return prices
+    except Exception as e:
+        st.sidebar.error(f"Could not load Market Prices: {e}")
+        return {}
+
 
 def save_all_to_sheets():
-    """Converts session state to a flat dataframe and pushes to Google Sheets."""
+    """Flattens session state data and pushes it to 'Master Data' tab."""
     rows = []
     for r in st.session_state.master_records:
         inf = r["Info"]
-        # Header Row for each Product
         rows.append({
             "Item": f"PRODUCT: {inf['Name']}", "Qty": 0, "Unit": "", "Price/Unit": 0,
             "Total Cost": inf.get('Total Cost', 0), "Raw Mat/Unit": inf.get('Raw Mat/Unit', 0),
@@ -22,24 +59,22 @@ def save_all_to_sheets():
             "MRP": inf.get('MRP', 0), "Margin %": inf.get('Margin %', 0),
             "OH Alloc %": inf.get('OH Alloc %', 100), "Pkg/Unit": inf.get('Pkg/Unit', 0)
         })
-        # Ingredient Rows for that Product
         for ig in r["Recipe"]:
             rows.append({
                 "Item": ig['item'], "Qty": ig['qty'], "Unit": ig['unit'],
                 "Price/Unit": ig['price_per_unit'],
-                "Total Cost": round(float(ig['qty']) * float(ig['price_per_unit']), 2),
+                "Total Cost": rd(float(ig['qty']) * float(ig['price_per_unit'])),
                 "Raw Mat/Unit": 0, "Yield": 0, "Waste %": 0, "MRP": 0, "Margin %": 0,
                 "OH Alloc %": 0, "Pkg/Unit": 0
             })
 
     df = pd.DataFrame(rows)
-    # This pushes the entire table to your Google Sheet
     conn.update(worksheet="Master Data", data=df)
-    st.success("✅ Database Synced to Google Sheets!")
+    st.success("✅ Cloud Database Updated!")
 
 
 def load_persistence():
-    """Reads the Google Sheet and reconstructs the session state."""
+    """Reconstructs the product list from 'Master Data' tab."""
     try:
         df = conn.read(worksheet="Master Data", ttl=0)
         if df is None or df.empty: return False
@@ -66,12 +101,10 @@ def load_persistence():
                     "Recipe": []
                 }
                 temp_recs.append(curr_prod)
-            elif curr_prod and item_str and not item_str.startswith("---"):
+            elif curr_prod and item_str:
                 curr_prod["Recipe"].append({
-                    "item": item_str,
-                    "qty": rd(row.get('Qty', 0)),
-                    "unit": str(row.get('Unit', 'g')),
-                    "price_per_unit": rd(row.get('Price/Unit', 0))
+                    "item": item_str, "qty": rd(row.get('Qty', 0)),
+                    "unit": str(row.get('Unit', 'g')), "price_per_unit": rd(row.get('Price/Unit', 0))
                 })
         st.session_state.master_records = temp_recs
         return True
@@ -79,17 +112,9 @@ def load_persistence():
         return False
 
 
-# --- 2. UTILITY FUNCTIONS ---
-def rd(v):
-    try:
-        return round(float(v), 2)
-    except:
-        return 0.0
-
-
+# --- 2. UI HELPERS ---
 def add_row():
-    st.session_state.recipe_buffer.append(
-        {"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0, "v": 0})
+    st.session_state.recipe_buffer.append({"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0})
 
 
 def delete_row(row_id):
@@ -102,16 +127,15 @@ def bagels_co_master_engine():
 
     if 'initialized' not in st.session_state:
         st.session_state.master_records = []
-        load_persistence()  # Pull data from Google Sheets immediately
-        st.session_state.price_dict = {}
+        load_persistence()
+        st.session_state.price_dict = load_market_prices()
         st.session_state.overheads = {
             "rent": 150000.0, "salaries": 150000.0, "utilities": 50000.0,
-            "marketing": 10000.0, "assets": 2000000.0, "dep_years": 5, "monthly_units": 2000
+            "assets": 2000000.0, "dep_years": 5, "monthly_units": 2000
         }
         st.session_state.editing_name = "New Item"
         st.session_state.load_id = 0
-        st.session_state.recipe_buffer = [
-            {"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0, "v": 0}]
+        st.session_state.recipe_buffer = [{"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0}]
         st.session_state.current_strategy = {"Yield": 1.0, "Waste %": 5.0, "Pkg/Unit": 15.0, "OH Alloc %": 100,
                                              "Margin %": 50.0, "VAT On": True}
         st.session_state.confirm_delete = False
@@ -128,7 +152,7 @@ def bagels_co_master_engine():
             rec = next(r for r in st.session_state.master_records if r["Info"]["Name"] == sel)
             st.session_state.recipe_buffer = [
                 {"id": str(uuid.uuid4()), "item": i['item'], "qty": i['qty'], "unit": i['unit'],
-                 "price": i['price_per_unit'], "v": 0} for i in rec["Recipe"]]
+                 "price": i['price_per_unit']} for i in rec["Recipe"]]
             st.session_state.current_strategy = rec["Info"]
             st.session_state.editing_name = rec["Info"]["Name"]
             st.session_state.load_id += 1
@@ -137,7 +161,7 @@ def bagels_co_master_engine():
         st.write("---")
         if st.button("➕ New Product", use_container_width=True):
             st.session_state.recipe_buffer = [
-                {"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0, "v": 0}]
+                {"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0}]
             st.session_state.current_strategy = {"Yield": 1.0, "Waste %": 5.0, "Pkg/Unit": 15.0, "OH Alloc %": 100,
                                                  "Margin %": 50.0, "VAT On": True}
             st.session_state.editing_name = "New Item"
@@ -155,7 +179,7 @@ def bagels_co_master_engine():
                 st.session_state.master_records = [r for r in st.session_state.master_records if
                                                    r["Info"]["Name"] != st.session_state.editing_name]
                 save_all_to_sheets()
-                st.session_state.confirm_delete = False
+                st.session_state.confirm_delete = False;
                 st.rerun()
             if c2.button("❌ No"): st.session_state.confirm_delete = False; st.rerun()
 
@@ -166,17 +190,20 @@ def bagels_co_master_engine():
         o["rent"] = c1.number_input("Monthly Rent", value=o["rent"])
         o["salaries"] = c2.number_input("Staff Salaries", value=o["salaries"])
         o["utilities"] = c3.number_input("Utilities", value=o["utilities"])
-        o["marketing"] = st.number_input("Marketing Cost", value=o["marketing"])
         o["assets"] = st.number_input("Kitchen Asset Value", value=o["assets"])
         o["monthly_units"] = st.number_input("Expected Units/Month", value=o["monthly_units"])
         o["dep_years"] = st.slider("Depreciation Period (Years)", 1, 15, o["dep_years"])
         avg_oh_per_unit = rd(
-            (o["rent"] + o["salaries"] + o["utilities"] + o["marketing"] + rd(o["assets"] / (o["dep_years"] * 12))) / o[
-                "monthly_units"])
+            (o["rent"] + o["salaries"] + o["utilities"] + rd(o["assets"] / (o["dep_years"] * 12))) / o["monthly_units"])
         st.info(f"**Allocated OH/Unit (100%):** रू {avg_oh_per_unit}")
 
     # --- RECIPE CONSTRUCTION ---
     st.subheader("🥣 Recipe Construction")
+    if st.button("🔄 Sync Market Prices"):
+        st.session_state.price_dict = load_market_prices()
+        st.rerun()
+
+    market_items = sorted([k.title() for k in st.session_state.price_dict.keys()])
     lid = st.session_state.load_id
     p_name = st.text_input("Product Name", value=st.session_state.editing_name, key=f"pn_{lid}")
 
@@ -185,7 +212,18 @@ def bagels_co_master_engine():
         uid = row["id"]
         cols = st.columns([3, 1, 1, 1.5, 1.5, 0.5])
 
-        item = cols[0].text_input(f"Ingredient {i + 1}", value=row['item'], key=f"i_{uid}_{lid}")
+        cur_val = row['item'].title()
+        opts = [""] + market_items
+        if cur_val and cur_val not in opts: opts.append(cur_val)
+
+        sel_item = cols[0].selectbox(f"Ingredient {i + 1}", opts, index=opts.index(cur_val) if cur_val in opts else 0,
+                                     key=f"s_{uid}_{lid}")
+
+        if sel_item.lower() != row['item']:
+            row['item'] = sel_item.lower()
+            row['price'] = st.session_state.price_dict.get(sel_item.lower(), 0.0)
+            st.rerun()
+
         qty = cols[1].number_input("Qty", 0.0, value=float(row['qty']), key=f"q_{uid}_{lid}")
         unit = cols[2].selectbox("Unit", ["g", "kg", "ml", "ltr", "pcs"], key=f"u_{uid}_{lid}",
                                  index=["g", "kg", "ml", "ltr", "pcs"].index(row['unit']))
@@ -195,7 +233,7 @@ def bagels_co_master_engine():
         cols[4].markdown(f"**रू {row_tot}**")
         if cols[5].button("🗑️", key=f"del_{uid}_{lid}"): delete_row(uid); st.rerun()
         updated_buffer.append(
-            {"id": uid, "item": item, "qty": qty, "unit": unit, "price": price, "total": row_tot, "v": row['v']})
+            {"id": uid, "item": sel_item.lower(), "qty": qty, "unit": unit, "price": price, "total": row_tot})
 
     st.session_state.recipe_buffer = updated_buffer
     if st.button("➕ Add Ingredient Row"): add_row(); st.rerun()
@@ -211,7 +249,8 @@ def bagels_co_master_engine():
     o_alloc = st.slider("OH Allocation %", 0, 200, value=int(strat.get("OH Alloc %", 100)), key=f"o_{lid}")
     vat = st.checkbox("Apply 13% VAT", value=strat.get("VAT On", True), key=f"v_{lid}")
 
-    unit_raw = rd((sum(r['total'] for r in st.session_state.recipe_buffer) / (1 - (wst / 100))) / yld)
+    total_ingredients_cost = sum(r['total'] for r in st.session_state.recipe_buffer)
+    unit_raw = rd((total_ingredients_cost / (1 - (wst / 100))) / yld)
     unit_oh = rd(avg_oh_per_unit * (o_alloc / 100))
     final_cost = rd(unit_raw + unit_oh + pkg)
     net_price = rd(final_cost / (1 - (marg / 100))) if marg < 100 else final_cost
@@ -224,10 +263,9 @@ def bagels_co_master_engine():
     c4.metric("VAT (13%)", f"रू {rd(mrp - net_price)}")
     c5.metric("Final MRP", f"रू {mrp}")
 
-    if st.button("💾 SAVE & SYNC TO GOOGLE SHEETS", type="primary", use_container_width=True):
+    if st.button("💾 SAVE & SYNC TO CLOUD", type="primary", use_container_width=True):
         info = {"Name": p_name, "Yield": yld, "Waste %": wst, "Pkg/Unit": pkg, "Margin %": marg, "OH Alloc %": o_alloc,
-                "VAT On": vat, "MRP": mrp, "Total Cost": sum(r['total'] for r in st.session_state.recipe_buffer),
-                "Raw Mat/Unit": unit_raw}
+                "VAT On": vat, "MRP": mrp, "Total Cost": total_ingredients_cost, "Raw Mat/Unit": unit_raw}
         rec_data = [{"item": i['item'], "qty": i['qty'], "unit": i['unit'], "price_per_unit": i['price']} for i in
                     st.session_state.recipe_buffer if i['item'] != ""]
 
