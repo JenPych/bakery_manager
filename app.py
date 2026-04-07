@@ -122,11 +122,14 @@ def bagels_co_master_engine():
     st.title("🥯 Bagels & Co. | Cloud Master Engine")
 
     # --- NAV BAR ---
-    n1, n2 = st.columns([3, 1])
+    n1, n2, n3 = st.columns([2, 0.8, 1.2])
+
     with n1:
         names = sorted(list(set(r["Info"]["Name"] for r in st.session_state.master_records)))
-        sel = st.selectbox("📂 Load Product", ["-- Select Product --"] + names)
-        if st.button("📂 Open Product") and sel != "-- Select Product --":
+        sel = st.selectbox("📂 Load Product", ["-- Select --"] + names, label_visibility="collapsed")
+
+    with n2:
+        if st.button("📂 Open", use_container_width=True) and sel != "-- Select --":
             rec = next(r for r in st.session_state.master_records if r["Info"]["Name"] == sel)
             st.session_state.recipe_buffer = [
                 {"id": str(uuid.uuid4()), "item": i['item'], "qty": i['qty'], "unit": i['unit'],
@@ -136,14 +139,37 @@ def bagels_co_master_engine():
             st.session_state.save_success = False
             st.rerun()
 
-    with n2:
-        st.write("###")
-        if st.button("➕ New Product", use_container_width=True):
-            st.session_state.recipe_buffer = [
-                {"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0, "v": 0}]
-            st.session_state.editing_name, st.session_state.load_id = "New Item", st.session_state.load_id + 1
-            st.session_state.save_success = False
-            st.rerun()
+    with n3:
+        sub_c1, sub_c2 = st.columns(2)
+        with sub_c1:
+            if st.button("➕ New", use_container_width=True):
+                st.session_state.recipe_buffer = [
+                    {"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0, "v": 0}]
+                st.session_state.editing_name, st.session_state.load_id = "New Item", st.session_state.load_id + 1
+                st.session_state.save_success = False
+                st.rerun()
+
+        with sub_c2:
+            # --- DELETE WITH CONFIRMATION POPUP ---
+            if sel != "-- Select --":
+                with st.popover("🗑️ Delete", use_container_width=True):
+                    st.warning(f"Confirm deletion of '{sel}'?")
+                    if st.button("Yes, Delete permanently", type="primary"):
+                        # 1. Remove from local session state
+                        st.session_state.master_records = [r for r in st.session_state.master_records if
+                                                           r["Info"]["Name"] != sel]
+
+                        # 2. Sync the shortened list back to Google Sheets
+                        if save_all_to_sheets():
+                            st.toast(f"Deleted {sel} from Cloud")
+                            # Reset UI to a clean state
+                            st.session_state.recipe_buffer = [
+                                {"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0, "v": 0}]
+                            st.session_state.editing_name = "New Item"
+                            st.session_state.load_id += 1
+                            st.rerun()
+            else:
+                st.button("🗑️", disabled=True, use_container_width=True)
 
     # --- OVERHEADS ---
     with st.expander("🏢 Monthly Overheads & Depreciation"):
