@@ -8,7 +8,6 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 
 def rd(v):
-    """Utility to safely round values to 2 decimal places."""
     try:
         return round(float(v), 2)
     except:
@@ -16,39 +15,28 @@ def rd(v):
 
 
 def load_market_prices():
-    """Reads 'Market Prices' tab and dynamically finds the correct columns."""
+    """Reads 'Market Prices' tab and dynamically finds columns."""
     try:
-        # Fetch data from the 2nd tab
         df_p = conn.read(worksheet="Market Prices", ttl=0)
+        if df_p is None or df_p.empty: return {}
 
-        if df_p is None or df_p.empty:
-            st.sidebar.warning("Market Prices sheet is empty.")
+        NAME_COL = "Ingredient Name"
+        PRICE_COL = "Price per Unit"
+
+        if NAME_COL not in df_p.columns or PRICE_COL not in df_p.columns:
+            st.sidebar.error(f"Headers mismatch! Need: '{NAME_COL}' and '{PRICE_COL}'")
             return {}
 
-        # --- DYNAMIC COLUMN SEARCH ---
-        # Define the exact headers you are looking for
-        NAME_COL_HEADER = "Ingredient Name"
-        PRICE_COL_HEADER = "Price per Unit"
-
-        # Check if the headers exist in the dataframe
-        if NAME_COL_HEADER not in df_p.columns or PRICE_COL_HEADER not in df_p.columns:
-            st.sidebar.error(f"Missing Headers! Need: '{NAME_COL_HEADER}' and '{PRICE_COL_HEADER}'")
-            return {}
-
-        # Create the dictionary using the found headers
-        prices = {
-            str(row[NAME_COL_HEADER]).strip().lower(): rd(row[PRICE_COL_HEADER])
-            for _, row in df_p.iterrows()
-            if pd.notnull(row[NAME_COL_HEADER])  # Skip empty rows
+        return {
+            str(row[NAME_COL]).strip().lower(): rd(row[PRICE_COL])
+            for _, row in df_p.iterrows() if pd.notnull(row[NAME_COL])
         }
-        return prices
     except Exception as e:
-        st.sidebar.error(f"Could not load Market Prices: {e}")
+        st.sidebar.error(f"Price Load Error: {e}")
         return {}
 
 
 def save_all_to_sheets():
-    """Flattens session state data and pushes it to 'Master Data' tab."""
     rows = []
     for r in st.session_state.master_records:
         inf = r["Info"]
@@ -62,66 +50,40 @@ def save_all_to_sheets():
         for ig in r["Recipe"]:
             rows.append({
                 "Item": ig['item'], "Qty": ig['qty'], "Unit": ig['unit'],
-                "Price/Unit": ig['price_per_unit'],
-                "Total Cost": rd(float(ig['qty']) * float(ig['price_per_unit'])),
-                "Raw Mat/Unit": 0, "Yield": 0, "Waste %": 0, "MRP": 0, "Margin %": 0,
-                "OH Alloc %": 0, "Pkg/Unit": 0
+                "Price/Unit": ig['price_per_unit'], "Total Cost": rd(ig['qty'] * ig['price_per_unit']),
+                "Raw Mat/Unit": 0, "Yield": 0, "Waste %": 0, "MRP": 0, "Margin %": 0, "OH Alloc %": 0, "Pkg/Unit": 0
             })
-
-    df = pd.DataFrame(rows)
-    conn.update(worksheet="Master Data", data=df)
+    conn.update(worksheet="Master Data", data=pd.DataFrame(rows))
     st.success("✅ Cloud Database Updated!")
 
 
 def load_persistence():
-    """Reconstructs the product list from 'Master Data' tab."""
     try:
         df = conn.read(worksheet="Master Data", ttl=0)
         if df is None or df.empty: return False
-
-        temp_recs = []
-        curr_prod = None
-
+        temp_recs, curr_prod = [], None
         for _, row in df.iterrows():
             item_str = str(row.get('Item', '')).strip()
             if "PRODUCT:" in item_str:
-                curr_prod = {
-                    "Info": {
-                        "Name": item_str.replace("PRODUCT:", "").strip(),
-                        "Raw Mat/Unit": rd(row.get('Raw Mat/Unit', 0)),
-                        "Yield": rd(row.get('Yield', 1.0)),
-                        "Waste %": rd(row.get('Waste %', 0)),
-                        "MRP": rd(row.get('MRP', 0)),
-                        "Margin %": rd(row.get('Margin %', 0)),
-                        "OH Alloc %": rd(row.get('OH Alloc %', 100)),
-                        "Pkg/Unit": rd(row.get('Pkg/Unit', 0)),
-                        "Total Cost": rd(row.get('Total Cost', 0)),
-                        "VAT On": True
-                    },
-                    "Recipe": []
-                }
+                curr_prod = {"Info": {"Name": item_str.replace("PRODUCT:", "").strip(),
+                                      "Raw Mat/Unit": rd(row.get('Raw Mat/Unit', 0)),
+                                      "Yield": rd(row.get('Yield', 1.0)), "Waste %": rd(row.get('Waste %', 0)),
+                                      "MRP": rd(row.get('MRP', 0)), "Margin %": rd(row.get('Margin %', 0)),
+                                      "OH Alloc %": rd(row.get('OH Alloc %', 100)),
+                                      "Pkg/Unit": rd(row.get('Pkg/Unit', 0)),
+                                      "Total Cost": rd(row.get('Total Cost', 0)), "VAT On": True}, "Recipe": []}
                 temp_recs.append(curr_prod)
             elif curr_prod and item_str:
-                curr_prod["Recipe"].append({
-                    "item": item_str, "qty": rd(row.get('Qty', 0)),
-                    "unit": str(row.get('Unit', 'g')), "price_per_unit": rd(row.get('Price/Unit', 0))
-                })
+                curr_prod["Recipe"].append(
+                    {"item": item_str, "qty": rd(row.get('Qty', 0)), "unit": str(row.get('Unit', 'g')),
+                     "price_per_unit": rd(row.get('Price/Unit', 0))})
         st.session_state.master_records = temp_recs
         return True
     except:
         return False
 
 
-# --- 2. UI HELPERS ---
-def add_row():
-    st.session_state.recipe_buffer.append({"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0})
-
-
-def delete_row(row_id):
-    st.session_state.recipe_buffer = [r for r in st.session_state.recipe_buffer if r["id"] != row_id]
-
-
-# --- 3. MAIN APP ---
+# --- 2. MAIN APP ---
 def bagels_co_master_engine():
     st.set_page_config(page_title="Bagels & Co. | Master Business Engine", layout="wide")
 
@@ -129,79 +91,56 @@ def bagels_co_master_engine():
         st.session_state.master_records = []
         load_persistence()
         st.session_state.price_dict = load_market_prices()
-        st.session_state.overheads = {
-            "rent": 150000.0, "salaries": 150000.0, "utilities": 50000.0,
-            "assets": 2000000.0, "dep_years": 5, "monthly_units": 2000
-        }
+        st.session_state.overheads = {"rent": 150000.0, "salaries": 150000.0, "utilities": 50000.0, "assets": 2000000.0,
+                                      "dep_years": 5, "monthly_units": 2000}
         st.session_state.editing_name = "New Item"
         st.session_state.load_id = 0
-        st.session_state.recipe_buffer = [{"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0}]
+        st.session_state.recipe_buffer = [
+            {"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0, "v": 0}]
         st.session_state.current_strategy = {"Yield": 1.0, "Waste %": 5.0, "Pkg/Unit": 15.0, "OH Alloc %": 100,
                                              "Margin %": 50.0, "VAT On": True}
-        st.session_state.confirm_delete = False
         st.session_state.initialized = True
 
     st.title("🥯 Bagels & Co. | Cloud Master Engine")
 
-    # --- TOP NAVIGATION ---
+    # --- NAV BAR ---
     n1, n2, n3 = st.columns([2, 1, 1])
     with n1:
         names = sorted(list(set(r["Info"]["Name"] for r in st.session_state.master_records)))
-        sel = st.selectbox("📂 Load Product from Cloud", ["-- Select --"] + names)
+        sel = st.selectbox("📂 Load Product", ["-- Select --"] + names)
         if st.button("📂 Open Product") and sel != "-- Select --":
             rec = next(r for r in st.session_state.master_records if r["Info"]["Name"] == sel)
             st.session_state.recipe_buffer = [
                 {"id": str(uuid.uuid4()), "item": i['item'], "qty": i['qty'], "unit": i['unit'],
-                 "price": i['price_per_unit']} for i in rec["Recipe"]]
-            st.session_state.current_strategy = rec["Info"]
-            st.session_state.editing_name = rec["Info"]["Name"]
-            st.session_state.load_id += 1
+                 "price": i['price_per_unit'], "v": 0} for i in rec["Recipe"]]
+            st.session_state.current_strategy, st.session_state.editing_name = rec["Info"], rec["Info"]["Name"]
+            st.session_state.load_id += 1;
             st.rerun()
     with n2:
         st.write("---")
         if st.button("➕ New Product", use_container_width=True):
             st.session_state.recipe_buffer = [
-                {"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0}]
-            st.session_state.current_strategy = {"Yield": 1.0, "Waste %": 5.0, "Pkg/Unit": 15.0, "OH Alloc %": 100,
-                                                 "Margin %": 50.0, "VAT On": True}
-            st.session_state.editing_name = "New Item"
-            st.session_state.load_id += 1
+                {"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0, "v": 0}]
+            st.session_state.editing_name = "New Item";
+            st.session_state.load_id += 1;
             st.rerun()
-    with n3:
-        st.write("---")
-        if not st.session_state.confirm_delete:
-            if st.button("🗑️ Delete Entry",
-                         use_container_width=True): st.session_state.confirm_delete = True; st.rerun()
-        else:
-            st.warning(f"Delete {st.session_state.editing_name}?")
-            c1, c2 = st.columns(2)
-            if c1.button("✅ Yes", type="primary"):
-                st.session_state.master_records = [r for r in st.session_state.master_records if
-                                                   r["Info"]["Name"] != st.session_state.editing_name]
-                save_all_to_sheets()
-                st.session_state.confirm_delete = False;
-                st.rerun()
-            if c2.button("❌ No"): st.session_state.confirm_delete = False; st.rerun()
 
     # --- OVERHEADS ---
-    with st.expander("🏢 Monthly Overheads & Depreciation"):
+    with st.expander("🏢 Overheads"):
         o = st.session_state.overheads
         c1, c2, c3 = st.columns(3)
-        o["rent"] = c1.number_input("Monthly Rent", value=o["rent"])
-        o["salaries"] = c2.number_input("Staff Salaries", value=o["salaries"])
+        o["rent"] = c1.number_input("Rent", value=o["rent"]);
+        o["salaries"] = c2.number_input("Salaries", value=o["salaries"]);
         o["utilities"] = c3.number_input("Utilities", value=o["utilities"])
-        o["assets"] = st.number_input("Kitchen Asset Value", value=o["assets"])
-        o["monthly_units"] = st.number_input("Expected Units/Month", value=o["monthly_units"])
-        o["dep_years"] = st.slider("Depreciation Period (Years)", 1, 15, o["dep_years"])
+        o["assets"] = st.number_input("Asset Value", value=o["assets"]);
+        o["monthly_units"] = st.number_input("Monthly Units", value=o["monthly_units"])
         avg_oh_per_unit = rd(
             (o["rent"] + o["salaries"] + o["utilities"] + rd(o["assets"] / (o["dep_years"] * 12))) / o["monthly_units"])
-        st.info(f"**Allocated OH/Unit (100%):** रू {avg_oh_per_unit}")
+        st.info(f"**Allocated OH/Unit:** रू {avg_oh_per_unit}")
 
-    # --- RECIPE CONSTRUCTION ---
+    # --- RECIPE ---
     st.subheader("🥣 Recipe Construction")
-    if st.button("🔄 Sync Market Prices"):
-        st.session_state.price_dict = load_market_prices()
-        st.rerun()
+    if st.button("🔄 Sync Market Prices"): st.session_state.price_dict = load_market_prices(); st.rerun()
 
     market_items = sorted([k.title() for k in st.session_state.price_dict.keys()])
     lid = st.session_state.load_id
@@ -219,30 +158,38 @@ def bagels_co_master_engine():
         sel_item = cols[0].selectbox(f"Ingredient {i + 1}", opts, index=opts.index(cur_val) if cur_val in opts else 0,
                                      key=f"s_{uid}_{lid}")
 
+        # FIX: If item changes, update price in buffer AND increment version 'v' to reset the Price widget
         if sel_item.lower() != row['item']:
             row['item'] = sel_item.lower()
             row['price'] = st.session_state.price_dict.get(sel_item.lower(), 0.0)
+            row['v'] += 1  # Forces price widget to redraw with new value
             st.rerun()
 
         qty = cols[1].number_input("Qty", 0.0, value=float(row['qty']), key=f"q_{uid}_{lid}")
         unit = cols[2].selectbox("Unit", ["g", "kg", "ml", "ltr", "pcs"], key=f"u_{uid}_{lid}",
                                  index=["g", "kg", "ml", "ltr", "pcs"].index(row['unit']))
-        price = cols[3].number_input("Price/Unit", 0.0, value=float(row['price']), key=f"p_{uid}_{lid}")
+
+        # Price widget uses a composite key {uid}_{v} so it resets when sel_item changes
+        price = cols[3].number_input("Price/Unit", 0.0, value=float(row['price']), key=f"p_{uid}_{row['v']}_{lid}")
 
         row_tot = rd(qty * price)
         cols[4].markdown(f"**रू {row_tot}**")
-        if cols[5].button("🗑️", key=f"del_{uid}_{lid}"): delete_row(uid); st.rerun()
+        if cols[5].button("🗑️", key=f"del_{uid}_{lid}"):
+            st.session_state.recipe_buffer = [r for r in st.session_state.recipe_buffer if r["id"] != uid]
+            st.rerun()
         updated_buffer.append(
-            {"id": uid, "item": sel_item.lower(), "qty": qty, "unit": unit, "price": price, "total": row_tot})
+            {"id": uid, "item": sel_item.lower(), "qty": qty, "unit": unit, "price": price, "total": row_tot,
+             "v": row['v']})
 
     st.session_state.recipe_buffer = updated_buffer
-    if st.button("➕ Add Ingredient Row"): add_row(); st.rerun()
+    if st.button("➕ Add Row"): st.session_state.recipe_buffer.append(
+        {"id": str(uuid.uuid4()), "item": "", "qty": 0.0, "unit": "g", "price": 0.0, "v": 0}); st.rerun()
 
-    # --- STRATEGY & SUMMARY ---
+    # --- STRATEGY ---
     st.divider()
     strat = st.session_state.current_strategy
     f1, f2, f3, f4 = st.columns(4)
-    yld = f1.number_input("Yield (Units)", 0.01, value=float(strat.get("Yield", 1.0)), key=f"yld_{lid}")
+    yld = f1.number_input("Yield", 0.01, value=float(strat.get("Yield", 1.0)), key=f"yld_{lid}")
     wst = f2.number_input("Waste %", 0.0, value=float(strat.get("Waste %", 5.0)), key=f"wst_{lid}")
     pkg = f3.number_input("Pkg/Unit", 0.0, value=float(strat.get("Pkg/Unit", 15.0)), key=f"pkg_{lid}")
     marg = f4.number_input("Margin %", 0.0, value=float(strat.get("Margin %", 50.0)), key=f"mr_{lid}")
@@ -257,10 +204,10 @@ def bagels_co_master_engine():
     mrp = rd(net_price * 1.13) if vat else net_price
 
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Raw Mat/Unit", f"रू {unit_raw}")
-    c2.metric("OH/Unit", f"रू {unit_oh}")
-    c3.metric("Net Price", f"रू {net_price}")
-    c4.metric("VAT (13%)", f"रू {rd(mrp - net_price)}")
+    c1.metric("Raw Mat", f"रू {unit_raw}");
+    c2.metric("OH/Unit", f"रू {unit_oh}");
+    c3.metric("Net Price", f"रू {net_price}");
+    c4.metric("VAT", f"रू {rd(mrp - net_price)}");
     c5.metric("Final MRP", f"रू {mrp}")
 
     if st.button("💾 SAVE & SYNC TO CLOUD", type="primary", use_container_width=True):
@@ -268,14 +215,12 @@ def bagels_co_master_engine():
                 "VAT On": vat, "MRP": mrp, "Total Cost": total_ingredients_cost, "Raw Mat/Unit": unit_raw}
         rec_data = [{"item": i['item'], "qty": i['qty'], "unit": i['unit'], "price_per_unit": i['price']} for i in
                     st.session_state.recipe_buffer if i['item'] != ""]
-
         idx = next((i for i, r in enumerate(st.session_state.master_records) if r["Info"]["Name"] == p_name), None)
         if idx is not None:
             st.session_state.master_records[idx] = {"Info": info, "Recipe": rec_data}
         else:
             st.session_state.master_records.append({"Info": info, "Recipe": rec_data})
-
-        save_all_to_sheets()
+        save_all_to_sheets();
         st.rerun()
 
 
