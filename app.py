@@ -36,7 +36,8 @@ def load_market_prices():
         return {}
 
 
-def save_all_to_sheets():
+def save_all_to_sheets(product_name):
+    """Flattens data and pushes to Sheets with a success notification."""
     rows = []
     for r in st.session_state.master_records:
         inf = r["Info"]
@@ -53,8 +54,13 @@ def save_all_to_sheets():
                 "Price/Unit": ig['price_per_unit'], "Total Cost": rd(ig['qty'] * ig['price_per_unit']),
                 "Raw Mat/Unit": 0, "Yield": 0, "Waste %": 0, "MRP": 0, "Margin %": 0, "OH Alloc %": 0, "Pkg/Unit": 0
             })
-    conn.update(worksheet="Master Data", data=pd.DataFrame(rows))
-    st.success("✅ Cloud Database Updated!")
+
+    try:
+        conn.update(worksheet="Master Data", data=pd.DataFrame(rows))
+        st.toast(f"✅ {product_name} Saved to Cloud!", icon='🥯')
+        st.success(f"Successfully synced {product_name} to Google Sheets.")
+    except Exception as e:
+        st.error(f"Cloud Sync Failed: {e}")
 
 
 def load_persistence():
@@ -125,18 +131,28 @@ def bagels_co_master_engine():
             st.session_state.load_id += 1;
             st.rerun()
 
-    # --- OVERHEADS ---
-    with st.expander("🏢 Overheads"):
+    # --- OVERHEADS (Depreciation Slider Restored) ---
+    with st.expander("🏢 Monthly Overheads & Depreciation"):
         o = st.session_state.overheads
         c1, c2, c3 = st.columns(3)
-        o["rent"] = c1.number_input("Rent", value=o["rent"]);
-        o["salaries"] = c2.number_input("Salaries", value=o["salaries"]);
+        o["rent"] = c1.number_input("Monthly Rent", value=o["rent"])
+        o["salaries"] = c2.number_input("Staff Salaries", value=o["salaries"])
         o["utilities"] = c3.number_input("Utilities", value=o["utilities"])
-        o["assets"] = st.number_input("Asset Value", value=o["assets"]);
-        o["monthly_units"] = st.number_input("Monthly Units", value=o["monthly_units"])
-        avg_oh_per_unit = rd(
-            (o["rent"] + o["salaries"] + o["utilities"] + rd(o["assets"] / (o["dep_years"] * 12))) / o["monthly_units"])
-        st.info(f"**Allocated OH/Unit:** रू {avg_oh_per_unit}")
+
+        c4, c5 = st.columns(2)
+        o["assets"] = c4.number_input("Kitchen Asset Value", value=o["assets"])
+        o["monthly_units"] = c5.number_input("Expected Monthly Units", value=o["monthly_units"])
+
+        # RESTORED SLIDER
+        o["dep_years"] = st.slider("Depreciation Period (Years)", 1, 15, o["dep_years"])
+
+        # Calculation logic
+        monthly_dep = rd(o["assets"] / (o["dep_years"] * 12))
+        total_monthly_oh = o["rent"] + o["salaries"] + o["utilities"] + monthly_dep
+        avg_oh_per_unit = rd(total_monthly_oh / o["monthly_units"])
+
+        st.info(
+            f"**Monthly Depreciation:** रू {monthly_dep} | **Total OH:** रू {total_monthly_oh} | **Allocated OH/Unit:** रू {avg_oh_per_unit}")
 
     # --- RECIPE ---
     st.subheader("🥣 Recipe Construction")
@@ -150,7 +166,6 @@ def bagels_co_master_engine():
     for i, row in enumerate(st.session_state.recipe_buffer):
         uid = row["id"]
         cols = st.columns([3, 1, 1, 1.5, 1.5, 0.5])
-
         cur_val = row['item'].title()
         opts = [""] + market_items
         if cur_val and cur_val not in opts: opts.append(cur_val)
@@ -158,18 +173,15 @@ def bagels_co_master_engine():
         sel_item = cols[0].selectbox(f"Ingredient {i + 1}", opts, index=opts.index(cur_val) if cur_val in opts else 0,
                                      key=f"s_{uid}_{lid}")
 
-        # FIX: If item changes, update price in buffer AND increment version 'v' to reset the Price widget
         if sel_item.lower() != row['item']:
             row['item'] = sel_item.lower()
             row['price'] = st.session_state.price_dict.get(sel_item.lower(), 0.0)
-            row['v'] += 1  # Forces price widget to redraw with new value
+            row['v'] += 1
             st.rerun()
 
         qty = cols[1].number_input("Qty", 0.0, value=float(row['qty']), key=f"q_{uid}_{lid}")
         unit = cols[2].selectbox("Unit", ["g", "kg", "ml", "ltr", "pcs"], key=f"u_{uid}_{lid}",
                                  index=["g", "kg", "ml", "ltr", "pcs"].index(row['unit']))
-
-        # Price widget uses a composite key {uid}_{v} so it resets when sel_item changes
         price = cols[3].number_input("Price/Unit", 0.0, value=float(row['price']), key=f"p_{uid}_{row['v']}_{lid}")
 
         row_tot = rd(qty * price)
@@ -215,12 +227,14 @@ def bagels_co_master_engine():
                 "VAT On": vat, "MRP": mrp, "Total Cost": total_ingredients_cost, "Raw Mat/Unit": unit_raw}
         rec_data = [{"item": i['item'], "qty": i['qty'], "unit": i['unit'], "price_per_unit": i['price']} for i in
                     st.session_state.recipe_buffer if i['item'] != ""]
+
         idx = next((i for i, r in enumerate(st.session_state.master_records) if r["Info"]["Name"] == p_name), None)
         if idx is not None:
             st.session_state.master_records[idx] = {"Info": info, "Recipe": rec_data}
         else:
             st.session_state.master_records.append({"Info": info, "Recipe": rec_data})
-        save_all_to_sheets();
+
+        save_all_to_sheets(p_name)  # Notification happens inside here
         st.rerun()
 
 
